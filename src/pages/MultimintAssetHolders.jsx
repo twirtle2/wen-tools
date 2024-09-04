@@ -12,6 +12,7 @@ import {
 export function MultimintAssetHolders() {
   const [assetId, setAssetId] = useState("");
   const [assetHolders, setAssetHolders] = useState([]);
+  const [assetHoldersNFDOnly, setAssetHoldersNFDOnly] = useState([]);
   const [assetOwnersLoading, setAssetOwnersLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checkOptin, setCheckOptin] = useState(false);
@@ -41,7 +42,7 @@ export function MultimintAssetHolders() {
     try {
       let response = await axios.get(
         `${indexerURL}/v2/assets/${asset_id}/balances` +
-          (!isOptin ? "?currency-greater-than=0" : "")
+        (!isOptin ? "?currency-greater-than=0" : "")
       );
       while (
         response.data["next-token"] &&
@@ -49,9 +50,9 @@ export function MultimintAssetHolders() {
       ) {
         const nextResponse = await axios.get(
           `${indexerURL}/v2/assets/${asset_id}/balances` +
-            (!isOptin
-              ? `?currency-greater-than=0&next=${response.data["next-token"]}`
-              : `?next=${response.data["next-token"]}`)
+          (!isOptin
+            ? `?currency-greater-than=0&next=${response.data["next-token"]}`
+            : `?next=${response.data["next-token"]}`)
         );
         response.data.balances = response.data.balances.concat(
           nextResponse.data.balances
@@ -75,6 +76,7 @@ export function MultimintAssetHolders() {
 
   async function getAssetHolders() {
     setAssetHolders([]);
+    setAssetHoldersNFDOnly([]);
     let assetIDs = assetId
       .split(",")
       .map((item) => item.trim())
@@ -84,11 +86,50 @@ export function MultimintAssetHolders() {
       if (assetId) {
         let assetBalances = [];
         setAssetOwnersLoading(true);
+        // loop set of Asset IDs and getAssetOwners, push owners into assetBalances
         for (const asset_id of assetIDs) {
           try {
             const asset_owners = await getAssetOwners(asset_id);
             assetBalances.push(asset_owners);
-          } catch (e) {}
+          } catch (e) { }
+        }
+        if (checkNfdOnly) {
+          let data = [];
+          let nfdDataList = [];
+          for (let j = 0; j < assetBalances.length; j++) {
+            const holderList = assetBalances[j].holders;
+            const assetId = assetBalances[j].asset_id
+            const assetName = assetBalances[j].asset_name
+            const assetHolderWallets = holderList.map(
+              (holderList) => holderList.address
+            );
+            // console.log('assetHolderWallets '+JSON.stringify(assetHolderWallets));
+            const nfdDomains = await getNfDomainsInBulk(assetHolderWallets, 20);
+            // console.log('nfdDomains '+JSON.stringify(nfdDomains))
+
+            try {
+              for (let j = 0; j < holderList.length; j++) {
+                const holder = holderList[j];
+                console.log('looping holderList ' + nfdDomains[holder.address] + ' holder => ' + JSON.stringify(holder))
+                data.push({
+                  wallet: holder.address,
+                  nfdomain: nfdDomains[holder.address] || "",
+                  asset_id: assetId,
+                  amount: holder.amount,
+                });
+              }
+            } catch (e) {
+              console.log('error ' + e)
+            }
+            console.log('data list ' + JSON.stringify(data));
+            const nfdData = data.filter((item) => item.nfdomain !== "");
+            nfdDataList.push({
+              asset_id: assetId,
+              asset_name: assetName,
+              no_of_wallets: nfdData.length
+            })
+          }
+          setAssetHoldersNFDOnly(nfdDataList);
         }
         setAssetHolders(assetBalances);
         setAssetOwnersLoading(false);
@@ -270,6 +311,7 @@ export function MultimintAssetHolders() {
         Separate multiple asset ids with commas.
       </p>
       <div className="flex flex-col items-start text-sm py-2 bg-black/20 px-4 rounded-xl">
+        {/* Checkbox All Holders (Opted In) */}
         <div className="flex items-center justify-center">
           <input
             type="checkbox"
@@ -282,6 +324,7 @@ export function MultimintAssetHolders() {
             Check Optin (with 0 balances too)
           </label>
         </div>
+        {/* Checkbox Node runners only */}
         <div className="flex items-center justify-center">
           <input
             type="checkbox"
@@ -294,6 +337,7 @@ export function MultimintAssetHolders() {
             Node runners only
           </label>
         </div>
+        {/* Checkbox NFD wallets only */}
         <div className="flex items-center justify-center">
           <input
             type="checkbox"
@@ -306,6 +350,7 @@ export function MultimintAssetHolders() {
             NFD wallets only
           </label>
         </div>
+        {/* Checkbox NFD verified */}
         <div className="flex items-center justify-center">
           <input
             type="checkbox"
@@ -331,11 +376,12 @@ export function MultimintAssetHolders() {
           </label>
         </div>
       </div>
+      {/* Button - get holders */}
       <button
         className="mb-2 bg-secondary-orange/80 hover:bg-secondary-orange text-black text-base font-semibold rounded py-2 w-fit px-2 mx-auto mt-1 hover:scale-95 duration-700"
         onClick={getAssetHolders}
       >
-        Get Asset Holders
+        {assetHolders.length > 0 ? "Refresh ":"Get "} Asset Holders
       </button>
       {assetOwnersLoading && (
         <div className="mx-auto flex flex-col">
@@ -362,6 +408,26 @@ export function MultimintAssetHolders() {
               </p>
             </div>
           ))}
+          {/* assetHoldersNFDOnly count text START */}
+          {assetHoldersNFDOnly.length > 0 && (
+            <>
+              {assetHoldersNFDOnly.map((nfdOnlyData, index) => (
+                <div key={index} className="w-full">
+                  <p className="text-center text-sm text-slate-300">
+                    <span className="font-semibold">
+                      {nfdOnlyData.asset_name} ({nfdOnlyData.asset_id})
+                    </span>{" "}
+                    includes{" "}
+                    <span className="animate-pulse font-semibold">
+                      {nfdOnlyData.no_of_wallets}
+                    </span>{" "}
+                    NFDs.
+                  </p>
+                </div>
+              ))}
+            </>
+          )}
+          {/* assetHoldersNFDOnly count text END */}
           {loading ? (
             <div className="mx-auto flex flex-col">
               <div
@@ -370,14 +436,15 @@ export function MultimintAssetHolders() {
               ></div>
               Fetching NFDomains...
             </div>
-          ) : (
-            <button
-              onClick={downloadAssetHoldersDataAsCSV}
-              className="mb-2 bg-green-500 hover:bg-green-700 text-black text-base font-semibold rounded py-2 w-fit px-2 mx-auto mt-2 hover:scale-95 duration-700"
-            >
-              Download Asset {checkOptin ? "Opted-in " : "Holders"}
-            </button>
-          )}
+          ) :
+            (
+              <button
+                onClick={downloadAssetHoldersDataAsCSV}
+                className="mb-2 bg-green-500 hover:bg-green-700 text-black text-base font-semibold rounded py-2 w-fit px-2 mx-auto mt-2 hover:scale-95 duration-700"
+              >
+                Download Asset {checkOptin ? "Opted-in " : "Holders"}
+              </button>
+            )}
         </>
       )}
       <p className="text-center text-xs text-slate-400 py-2">

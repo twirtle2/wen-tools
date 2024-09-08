@@ -642,7 +642,9 @@ export async function createAssetOptInTransactions(assets, nodeURL, mnemonic) {
       amount: 0,
       assetIndex: parseInt(assets[i]),
       suggestedParams: params,
-      note: new TextEncoder().encode("via wen.tools - free tools for creators and collectors"),
+      note: new TextEncoder().encode(
+        "via wen.tools - free tools for creators and collectors"
+      ),
     });
     txnsArray.push(tx);
   }
@@ -688,7 +690,9 @@ export async function createClawbackTransactions(
       amount: parseInt(
         data_for_txns[i].amount * 10 ** assetDecimals[data_for_txns[i].asset_id]
       ),
-      note: new TextEncoder().encode("via wen.tools - free tools for creators and collectors"),
+      note: new TextEncoder().encode(
+        "via wen.tools - free tools for creators and collectors"
+      ),
     });
     txnsArray.push(tx);
   }
@@ -730,7 +734,9 @@ export async function createFreezeTransactions(
       assetIndex: parseInt(data_for_txns[i].asset_id),
       freezeState: data_for_txns[i].frozen.trim() === "Y" ? true : false,
       freezeTarget: data_for_txns[i].wallet,
-      note: new TextEncoder().encode("via wen.tools - free tools for creators and collectors"),
+      note: new TextEncoder().encode(
+        "via wen.tools - free tools for creators and collectors"
+      ),
     });
     txnsArray.push(tx);
   }
@@ -759,11 +765,11 @@ export async function getAssetCreatorWallet(assetId) {
     const nodeUrl = getNodeURL();
     const url = `${nodeUrl}/v2/assets/${assetId}`;
     const response = await axios.get(url);
-    console.log('getAssetCreatorWallet '+JSON.stringify(response));
-    console.log('getAssetCreatorWallet '+response.data.params.creator);
+    console.log("getAssetCreatorWallet " + JSON.stringify(response));
+    console.log("getAssetCreatorWallet " + response.data.params.creator);
     return response.data.params.creator;
   } catch (err) {
-    console.log('error '+err);
+    console.log("error " + err);
     return "";
   }
 }
@@ -790,7 +796,9 @@ export async function createAssetOptoutTransactions(
         assetIndex: parseInt(assets[i]),
         suggestedParams: params,
         closeRemainderTo: creatorAddress.trim(),
-        note: new TextEncoder().encode("via wen.tools - free tools for creators and collectors"),
+        note: new TextEncoder().encode(
+          "via wen.tools - free tools for creators and collectors"
+        ),
       });
       txnsArray.push(tx);
     }
@@ -1014,7 +1022,11 @@ export async function isWalletHolder(wallet) {
   return userAssets.some((asset) => createdAssets.includes(asset));
 }
 
-export async function getNfDomainsInBulk(wallets, bulkSize = 20) {
+export async function getNfDomainsInBulk(
+  wallets,
+  bulkSize = 20,
+  view = "tiny"
+) {
   const uniqueWallets = [...new Set(wallets)];
   let nfdDomains = {};
   let counter = 0;
@@ -1025,14 +1037,37 @@ export async function getNfDomainsInBulk(wallets, bulkSize = 20) {
       .join("&");
     try {
       const nfdLookup = await fetchNFDJSON(
-        `https://api.nf.domains/nfd/lookup?view=tiny&${chunk}`
+        `https://api.nf.domains/nfd/lookup?view=${view}&${chunk}`
       );
       if (nfdLookup.status === 200) {
         for (const [account, domain] of Object.entries(nfdLookup.body)) {
-          nfdDomains[account] = domain.name;
+          if (view == "tiny") {
+            nfdDomains[account] = domain.name;
+          } else {
+            try {
+              const verified = domain.properties.verified || {}; // `verified` is guaranteed to exist but might be empty
+              let twitter =
+                typeof verified.twitter === "string" ? verified.twitter : "";
+              let discord =
+                typeof verified.discord === "string" ? verified.discord : "";
+              let isVerified = true;
+              if (twitter == "" && discord == "") {
+                isVerified = false;
+              }
+              nfdDomains[account] = {
+                nfd: domain.name,
+                isVerified: isVerified,
+              };
+            } catch (e) {
+              console.log("getNfDomainsInBulk caught ==> " + e);
+              console.log("domain ==> " + JSON.stringify(domain));
+              throw new Error("shut it down");
+            }
+          }
         }
       }
-    } catch {
+    } catch (e) {
+      console.log("getNfDomainsInBulk caught ==> " + e);
       continue;
     }
     counter += bulkSize;
@@ -1221,7 +1256,7 @@ export async function getParticipationStatusOfWallet(wallet) {
   try {
     const url = getNodeURL() + `/v2/accounts/${wallet}?exclude=all`;
     const response = await axios.get(url, {
-      headers: { "Cache-Control": "max-age=600" },
+      //   headers: { "Cache-Control": "max-age=600" },
     });
     if (response.status === 200) {
       if (response.data.participation && response.data.status === "Online") {

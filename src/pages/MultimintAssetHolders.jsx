@@ -12,7 +12,10 @@ import {
 export function MultimintAssetHolders() {
   const [assetId, setAssetId] = useState("");
   const [assetHolders, setAssetHolders] = useState([]);
-  const [assetHoldersNFDOnly, setAssetHoldersNFDOnly] = useState([]);
+  const [assetHoldersNFDOnly, setAssetHoldersNFDOnly] = useState(new Set());
+  const [assetHoldersNodeRunners, setAssetHoldersNodeRunners] = useState(
+    new Set()
+  );
   const [assetOwnersLoading, setAssetOwnersLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checkOptin, setCheckOptin] = useState(false);
@@ -20,7 +23,6 @@ export function MultimintAssetHolders() {
   const [checkVerifiedOnly, setCheckVerifiedOnly] = useState(false);
   const [checkRunningNode, setCheckRunningNode] = useState(false);
   const [checkRandSupport, setCheckRandSupport] = useState(false);
-
 
   async function getAssetOwners(asset_id) {
     const isOptin = checkOptin;
@@ -42,7 +44,7 @@ export function MultimintAssetHolders() {
     try {
       let response = await axios.get(
         `${indexerURL}/v2/assets/${asset_id}/balances` +
-        (!isOptin ? "?currency-greater-than=0" : "")
+          (!isOptin ? "?currency-greater-than=0" : "")
       );
       while (
         response.data["next-token"] &&
@@ -50,9 +52,9 @@ export function MultimintAssetHolders() {
       ) {
         const nextResponse = await axios.get(
           `${indexerURL}/v2/assets/${asset_id}/balances` +
-          (!isOptin
-            ? `?currency-greater-than=0&next=${response.data["next-token"]}`
-            : `?next=${response.data["next-token"]}`)
+            (!isOptin
+              ? `?currency-greater-than=0&next=${response.data["next-token"]}`
+              : `?next=${response.data["next-token"]}`)
         );
         response.data.balances = response.data.balances.concat(
           nextResponse.data.balances
@@ -76,7 +78,8 @@ export function MultimintAssetHolders() {
 
   async function getAssetHolders() {
     setAssetHolders([]);
-    setAssetHoldersNFDOnly([]);
+    setAssetHoldersNFDOnly(new Set());
+    setAssetHoldersNodeRunners(new Set());
     let assetIDs = assetId
       .split(",")
       .map((item) => item.trim())
@@ -85,51 +88,85 @@ export function MultimintAssetHolders() {
     try {
       if (assetId) {
         let assetBalances = [];
+        let holderAddressSet = new Set();
+        let assetMap = new Map();
         setAssetOwnersLoading(true);
         // loop set of Asset IDs and getAssetOwners, push owners into assetBalances
         for (const asset_id of assetIDs) {
           try {
             const asset_owners = await getAssetOwners(asset_id);
             assetBalances.push(asset_owners);
-          } catch (e) { }
-        }
-        if (checkNfdOnly) {
-          let data = [];
-          let nfdDataList = [];
-          for (let j = 0; j < assetBalances.length; j++) {
-            const holderList = assetBalances[j].holders;
-            const assetId = assetBalances[j].asset_id
-            const assetName = assetBalances[j].asset_name
-            const assetHolderWallets = holderList.map(
-              (holderList) => holderList.address
-            );
-            // console.log('assetHolderWallets '+JSON.stringify(assetHolderWallets));
-            const nfdDomains = await getNfDomainsInBulk(assetHolderWallets, 20);
-            // console.log('nfdDomains '+JSON.stringify(nfdDomains))
-
-            try {
-              for (let j = 0; j < holderList.length; j++) {
-                const holder = holderList[j];
-                console.log('looping holderList ' + nfdDomains[holder.address] + ' holder => ' + JSON.stringify(holder))
-                data.push({
-                  wallet: holder.address,
-                  nfdomain: nfdDomains[holder.address] || "",
-                  asset_id: assetId,
-                  amount: holder.amount,
-                });
-              }
-            } catch (e) {
-              console.log('error ' + e)
+            let holderList = [];
+            holderList = asset_owners.holders;
+            for (let j = 0; j < holderList.length; j++) {
+              holderAddressSet.add(holderList[j].address);
             }
-            console.log('data list ' + JSON.stringify(data));
-            const nfdData = data.filter((item) => item.nfdomain !== "");
-            nfdDataList.push({
-              asset_id: assetId,
-              asset_name: assetName,
-              no_of_wallets: nfdData.length
-            })
+          } catch (e) {}
+          console.log(
+            "holderAddressSet " + " " + JSON.stringify([...holderAddressSet])
+          );
+        }
+        //get node runners
+        if (checkRunningNode) {
+          toast.info("Checking participation status of wallets");
+          let holderAddressList = Array.from([...holderAddressSet]);
+          var participatedWallets = new Set();
+          for (var i = 0; i < holderAddressList.length; i++) {
+            var participationStatus = await getParticipationStatusOfWallet(
+              holderAddressList[i]
+            );
+            if (participationStatus) {
+              participatedWallets.add(holderAddressList[i]);
+            }
+            if (i % 50 === 0 && i !== 0) {
+              toast.info(`Checked ${i}/${holderAddressList.length} wallets.`);
+            }
           }
-          setAssetHoldersNFDOnly(nfdDataList);
+          console.log(
+            "participatedWallets nodeRunners " + participatedWallets.size
+          );
+          setAssetHoldersNodeRunners(participatedWallets);
+        }
+
+        //get NFD wallets
+        if (checkNfdOnly) {
+          toast.info("Fetching NFDs...");
+          let holderAddressList = Array.from([...holderAddressSet]);
+          console.log("holderAddressList length " + holderAddressList.length);
+
+          var participatedWallets = new Set();
+          let nfdView = "tiny";
+          if (checkVerifiedOnly) {
+            nfdView = "full";
+          }
+          const nfdDomains = await getNfDomainsInBulk(
+            holderAddressList,
+            20,
+            nfdView
+          );
+          console.log("nfdDomains JSON " + JSON.stringify(nfdDomains));
+          try {
+            if (nfdView == "tiny") {
+              for (const [key, value] of Object.entries(nfdDomains)) {
+                participatedWallets.add(value);
+              }
+            } else {
+              for (const account in nfdDomains) {
+                const nfd = nfdDomains[account].nfd;
+                const isVerified = nfdDomains[account].isVerified;
+                // console.log(
+                //   `Address: ${account}, NFD: ${nfd}, isVerified: ${isVerified}`
+                // );
+                if (isVerified) {
+                  participatedWallets.add(account);
+                }
+              }
+            }
+          } catch (e) {
+            console.log("error " + e);
+          }
+          console.log("participatedWallets NFD " + participatedWallets.size);
+          setAssetHoldersNFDOnly(participatedWallets);
         }
         setAssetHolders(assetBalances);
         setAssetOwnersLoading(false);
@@ -137,7 +174,7 @@ export function MultimintAssetHolders() {
         toast.info("Please enter at least one asset id!");
       }
     } catch (error) {
-      //console.log(error);
+      console.log(error);
     }
   }
 
@@ -350,19 +387,23 @@ export function MultimintAssetHolders() {
             NFD wallets only
           </label>
         </div>
-        {/* Checkbox NFD verified */}
-        <div className="flex items-center justify-center">
-          <input
-            type="checkbox"
-            id="check_optin"
-            className="mr-2"
-            checked={checkVerifiedOnly}
-            onChange={(e) => setCheckVerifiedOnly(e.target.checked)}
-          />
-          <label htmlFor="check_optin" className="text-slate-300">
-            Verified with NFD's Twitter or Discord only
-          </label>
-        </div>
+        {/* Checkbox NFD verified only if checkNfdOnly = TRUE */}
+        {checkNfdOnly && (
+          <div className="flex items-center justify-center">
+            <input
+              type="checkbox"
+              id="check_optin"
+              className="mr-2"
+              checked={checkVerifiedOnly}
+              onChange={(e) => setCheckVerifiedOnly(e.target.checked)}
+            />
+            <label htmlFor="check_optin" className="text-slate-300">
+              Verified with NFD's Twitter or Discord only
+            </label>
+          </div>
+        )}
+
+        {/* Checkbox Rand support */}
         <div className="flex items-center justify-center">
           <input
             type="checkbox"
@@ -381,7 +422,7 @@ export function MultimintAssetHolders() {
         className="mb-2 bg-secondary-orange/80 hover:bg-secondary-orange text-black text-base font-semibold rounded py-2 w-fit px-2 mx-auto mt-1 hover:scale-95 duration-700"
         onClick={getAssetHolders}
       >
-        {assetHolders.length > 0 ? "Refresh ":"Get "} Asset Holders
+        {assetHolders.length > 0 ? "Refresh " : "Get "} Asset Holders
       </button>
       {assetOwnersLoading && (
         <div className="mx-auto flex flex-col">
@@ -409,25 +450,27 @@ export function MultimintAssetHolders() {
             </div>
           ))}
           {/* assetHoldersNFDOnly count text START */}
-          {assetHoldersNFDOnly.length > 0 && (
+          {assetHoldersNFDOnly.size > 0 && (
             <>
-              {assetHoldersNFDOnly.map((nfdOnlyData, index) => (
-                <div key={index} className="w-full">
-                  <p className="text-center text-sm text-slate-300">
-                    <span className="font-semibold">
-                      {nfdOnlyData.asset_name} ({nfdOnlyData.asset_id})
-                    </span>{" "}
-                    includes{" "}
-                    <span className="animate-pulse font-semibold">
-                      {nfdOnlyData.no_of_wallets}
-                    </span>{" "}
-                    NFDs.
-                  </p>
-                </div>
-              ))}
+              <p className="text-center text-sm text-slate-300">
+                <span className="animate-pulse font-semibold">
+                  Includes {assetHoldersNFDOnly.size} NFDs.
+                </span>
+              </p>
             </>
           )}
           {/* assetHoldersNFDOnly count text END */}
+          {/* assetHoldersNodeRunners count text START */}
+          {assetHoldersNodeRunners.size > 0 && (
+            <>
+              <p className="text-center text-sm text-slate-300">
+                <span className="animate-pulse font-semibold">
+                  Includes {assetHoldersNodeRunners.size} node runners.
+                </span>
+              </p>
+            </>
+          )}
+          {/* assetHoldersNodeRunners count text END */}
           {loading ? (
             <div className="mx-auto flex flex-col">
               <div
@@ -436,15 +479,14 @@ export function MultimintAssetHolders() {
               ></div>
               Fetching NFDomains...
             </div>
-          ) :
-            (
-              <button
-                onClick={downloadAssetHoldersDataAsCSV}
-                className="mb-2 bg-green-500 hover:bg-green-700 text-black text-base font-semibold rounded py-2 w-fit px-2 mx-auto mt-2 hover:scale-95 duration-700"
-              >
-                Download Asset {checkOptin ? "Opted-in " : "Holders"}
-              </button>
-            )}
+          ) : (
+            <button
+              onClick={downloadAssetHoldersDataAsCSV}
+              className="mb-2 bg-green-500 hover:bg-green-700 text-black text-base font-semibold rounded py-2 w-fit px-2 mx-auto mt-2 hover:scale-95 duration-700"
+            >
+              Download Asset {checkOptin ? "Opted-in " : "Holders"}
+            </button>
+          )}
         </>
       )}
       <p className="text-center text-xs text-slate-400 py-2">
